@@ -2,108 +2,118 @@ import streamlit as st
 import requests
 import pandas as pd
 from streamlit_autorefresh import st_autorefresh
+import google.generativeai as genai
 from datetime import datetime
 
-# --- A. 基礎配置 ---
-st.set_page_config(page_title="Trump Monitor 2026", page_icon="🦅", layout="wide")
+# --- A. 核心配置 ---
+st.set_page_config(page_title="川普即時翻譯監控", page_icon="🇺🇸", layout="wide")
 
-# 設定 Secrets (請在 Streamlit Cloud 後台 Settings > Secrets 填入)
-# APIFY_TOKEN = "..."
-# DISCORD_WEBHOOK = "..."
+# CSS 美化：調整字體與卡片樣式
+st.markdown("""
+    <style>
+    .main { background-color: #f5f7f9; }
+    .stMetric { background-color: #ffffff; padding: 15px; border-radius: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+    .post-card { background-color: white; padding: 20px; border-radius: 12px; border-left: 5px solid #E01E35; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+    .time-label { color: #666; font-size: 0.85rem; }
+    .trans-text { color: #1a73e8; font-weight: 500; margin-top: 10px; }
+    </style>
+    """, unsafe_allow_stdio=True)
 
+# 讀取 Secrets
 try:
     APIFY_TOKEN = st.secrets["APIFY_TOKEN"]
     DISCORD_WEBHOOK = st.secrets["DISCORD_WEBHOOK"]
-except Exception:
-    st.error("❌ 找不到 Secrets 設定，請在 Streamlit 後台填入 APIFY_TOKEN 與 DISCORD_WEBHOOK")
+    GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
+    genai.configure(api_key=GEMINI_API_KEY)
+    model = genai.GenerativeModel('gemini-1.5-flash')
+except Exception as e:
+    st.error(f"❌ 缺少必要設定: {e}")
     st.stop()
 
-# 自動重新整理：每 10 分鐘 (600,000 毫秒) 執行一次
-count = st_autorefresh(interval=600000, key="fizzbuzzcounter")
+# 自動刷新 (10分鐘)
+st_autorefresh(interval=600000, key="auto_refresh")
 
-st.title("🦅 川普 Truth Social 即時監控儀表板")
-st.caption(f"最後檢查時間: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} (每 10 分鐘自動更新)")
+# --- B. 翻譯函數 (快取處理，節省 Token) ---
+@st.cache_data(show_spinner=False)
+def translate_text(text):
+    if not text: return ""
+    prompt = f"請將這段川普在 Truth Social 的發文翻譯成流暢的繁體中文，保持原有的語氣與重點：\n\n{text}"
+    try:
+        response = model.generate_content(prompt)
+        return response.text
+    except:
+        return "⚠️ 翻譯暫時無法使用"
 
-# --- B. 抓取資料函數 ---
+# --- C. 資料抓取 ---
 def fetch_data():
     url = f"https://api.apify.com/v2/acts/muhammetakkurtt~truth-social-scraper/run-sync-get-dataset-items?token={APIFY_TOKEN}"
-    payload = {
-        "username": "realDonaldTrump",
-        "maxPosts": 10,
-        "includeReplies": False
-    }
+    payload = {"username": "realDonaldTrump", "maxPosts": 8}
     try:
-        # 增加 timeout 到 60 秒，因為 201 通常代表任務正在處理中並產出結果
-        response = requests.post(url, json=payload, timeout=60)
-        
-        # 關鍵修正：接受 200 與 201
-        if response.status_code in [200, 201]:
-            return response.json()
-        else:
-            st.error(f"API 請求失敗，狀態碼: {response.status_code}")
-            st.write("回應內容：", response.text) # 印出錯誤訊息方便除錯
-            return []
-    except Exception as e:
-        st.error(f"連線發生錯誤: {e}")
+        res = requests.post(url, json=payload, timeout=60)
+        return res.json() if res.status_code in [200, 201] else []
+    except:
         return []
 
+# --- D. 主頁面介面 ---
+col1, col2 = st.columns([2, 1])
+with col1:
+    st.title("🇺🇸 川普發言即時翻譯儀表板")
+with col2:
+    st.write(f"最後更新：{datetime.now().strftime('%H:%M:%S')}")
+    if st.button("🔄 立即強制刷新"):
+        st.cache_data.clear()
+        st.rerun()
 
-# --- C. 核心處理邏輯 ---
-posts_data = fetch_data()
+posts = fetch_data()
 
-if not posts_data:
-    st.info("⌛ 目前沒有新資料或正在等待 API 回應...")
+if posts:
+    # 統一欄位名稱
+    df = pd.DataFrame(posts)
+    t_key = next((k for k in ['createdAt', 'created_at', 'time'] if k in df.columns), 'time')
+    c_key = next((k for k in ['text', 'content', 'caption'] if k in df.columns), 'text')
+    i_key = next((k for k in ['id', 'post_id'] if k in df.columns), 'id')
+
+    # 第一則：最新動態亮點
+    latest = posts[0]
+    with st.container():
+        st.markdown("### 🚨 最新動態")
+        trans = translate_text(latest.get(c_key, ""))
+        
+        st.markdown(f"""
+            <div class="post-card">
+                <div class="time-label">發布時間：{latest.get(t_key)}</div>
+                <p style='font-size: 1.1rem; margin-top:10px;'>{latest.get(c_key)}</p>
+                <div class="trans-text">💡 中文翻譯：<br>{trans}</div>
+            </div>
+        """, unsafe_allow_stdio=True)
+
+    # 推播邏輯 (僅針對最新的一則)
+    if "last_id" not in st.session_state:
+        st.session_state.last_id = latest.get(i_key)
+
+    if latest.get(i_key) != st.session_state.last_id:
+        discord_msg = {
+            "embeds": [{
+                "title": "🇺🇸 川普新發文 (中文翻譯)",
+                "description": f"**原文：**\n{latest.get(c_key)}\n\n**翻譯：**\n{trans}",
+                "color": 15548997,
+                "url": f"https://truthsocial.com/@realDonaldTrump"
+            }]
+        }
+        requests.post(DISCORD_WEBHOOK, json=discord_msg)
+        st.session_state.last_id = latest.get(i_key)
+        st.toast("新貼文已推送至 Discord！")
+
+    st.divider()
+
+    # 歷史列表
+    st.subheader("📜 歷史發文回顧")
+    for p in posts[1:]:
+        with st.expander(f"🕒 {p.get(t_key)}"):
+            st.write("**原文：**")
+            st.write(p.get(c_key))
+            st.write("**中文翻譯：**")
+            st.info(translate_text(p.get(c_key)))
+
 else:
-    # 將資料轉為 DataFrame
-    df_raw = pd.DataFrame(posts_data)
-    
-    # 【修復 KeyError】: 自動尋找可能的欄位名稱
-    # 2026 年常見的欄位變體
-    time_keys = ['createdAt', 'created_at', 'timestamp', 'time']
-    text_keys = ['content', 'text', 'caption', 'body']
-    id_keys = ['id', 'post_id', 'id_str']
-
-    # 找出當前 JSON 中存在的 key
-    col_time = next((k for k in time_keys if k in df_raw.columns), None)
-    col_text = next((k for k in text_keys if k in df_raw.columns), None)
-    col_id = next((k for k in id_keys if k in df_raw.columns), None)
-
-    if col_time and col_text:
-        # 整理後的乾淨資料
-        clean_df = df_raw[[col_time, col_text]].copy()
-        
-        # --- D. 檢查更新並推播 ---
-        latest_post_id = str(df_raw.iloc[0][col_id]) if col_id else ""
-        
-        # 使用 st.cache_resource 儲存上一次推播過的 ID
-        if "last_notified_id" not in st.session_state:
-            st.session_state.last_notified_id = latest_post_id
-        
-        # 如果最新 ID 與紀錄的不符，發送 Discord
-        if latest_post_id and latest_post_id != st.session_state.last_notified_id:
-            content = df_raw.iloc[0][col_text]
-            post_url = f"https://truthsocial.com/@realDonaldTrump/posts/{latest_post_id}"
-            
-            discord_data = {
-                "embeds": [{
-                    "title": "🚨 川普新發文通知",
-                    "description": content[:1000], # Discord 限制描述長度
-                    "url": post_url,
-                    "color": 15548997, # 烈焰紅
-                    "timestamp": datetime.utcnow().isoformat()
-                }]
-            }
-            requests.post(DISCORD_WEBHOOK, json=discord_data)
-            st.session_state.last_notified_id = latest_post_id
-            st.toast("✅ 新貼文已推播至 Discord!")
-
-        # --- E. 網頁介面顯示 ---
-        st.subheader("📋 最近貼文列表")
-        st.dataframe(clean_df, use_container_width=True)
-        
-        for index, row in clean_df.iterrows():
-            with st.expander(f"💬 貼文時間: {row[col_time]}"):
-                st.write(row[col_text])
-    else:
-        st.error("❌ 無法解析資料欄位。請檢查 API 回傳內容。")
-        st.write("目前 API 回傳的欄位有：", df_raw.columns.tolist())
+    st.warning("暫時抓不到資料，請檢查 API 設定。")
