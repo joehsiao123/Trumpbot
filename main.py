@@ -85,7 +85,7 @@ if posts:
                 <p style='font-size: 1.1rem; margin-top:10px;'>{latest.get(c_key)}</p>
                 <div class="trans-text">💡 中文翻譯：<br>{trans}</div>
             </div>
-        """, unsafe_allow_stdio=True)
+        """, unsafe_allow_html=True)
 
     # 推播邏輯 (僅針對最新的一則)
     if "last_id" not in st.session_state:
