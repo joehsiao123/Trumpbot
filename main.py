@@ -26,7 +26,6 @@ st.caption(f"最後檢查時間: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} 
 
 # --- B. 抓取資料函數 ---
 def fetch_data():
-    # 使用 2026 推薦的 Apify Actor (muhammetakkurtt/truth-social-scraper)
     url = f"https://api.apify.com/v2/acts/muhammetakkurtt~truth-social-scraper/run-sync-get-dataset-items?token={APIFY_TOKEN}"
     payload = {
         "username": "realDonaldTrump",
@@ -34,15 +33,20 @@ def fetch_data():
         "includeReplies": False
     }
     try:
-        response = requests.post(url, json=payload, timeout=30)
-        if response.status_code == 200:
+        # 增加 timeout 到 60 秒，因為 201 通常代表任務正在處理中並產出結果
+        response = requests.post(url, json=payload, timeout=60)
+        
+        # 關鍵修正：接受 200 與 201
+        if response.status_code in [200, 201]:
             return response.json()
         else:
             st.error(f"API 請求失敗，狀態碼: {response.status_code}")
+            st.write("回應內容：", response.text) # 印出錯誤訊息方便除錯
             return []
     except Exception as e:
         st.error(f"連線發生錯誤: {e}")
         return []
+
 
 # --- C. 核心處理邏輯 ---
 posts_data = fetch_data()
