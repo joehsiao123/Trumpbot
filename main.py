@@ -25,7 +25,7 @@ try:
     DISCORD_WEBHOOK = st.secrets["DISCORD_WEBHOOK"]
     GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
     genai.configure(api_key=GEMINI_API_KEY)
-    model = genai.GenerativeModel('gemini-1.5-flash')
+    model = genai.GenerativeModel('gemini-3-flash-preview')
 except Exception as e:
     st.error(f"❌ 缺少必要設定: {e}")
     st.stop()
