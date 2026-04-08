@@ -45,14 +45,61 @@ def translate_text(text):
         return "⚠️ 翻譯暫時無法使用"
 
 # --- C. 資料抓取 ---
+# --- 修正後的資料抓取函數 ---
 def fetch_data():
+    # 這裡建議確認一下你使用的 Actor ID，muhammetakkurtt/truth-social-scraper 是目前較常用的
     url = f"https://api.apify.com/v2/acts/muhammetakkurtt~truth-social-scraper/run-sync-get-dataset-items?token={APIFY_TOKEN}"
-    payload = {"username": "realDonaldTrump", "maxPosts": 8}
+    payload = {
+        "username": "realDonaldTrump",
+        "maxPosts": 8,
+        "includeReplies": False
+    }
     try:
         res = requests.post(url, json=payload, timeout=60)
-        return res.json() if res.status_code in [200, 201] else []
-    except:
+        if res.status_code in [200, 201]:
+            data = res.json()
+            # 偵錯用：如果在 Streamlit Cloud，這會在日誌中顯示抓到了幾筆
+            print(f"成功抓取到 {len(data)} 筆資料") 
+            return data
+        else:
+            st.error(f"API 失敗。狀態碼: {res.status_code}")
+            st.write("錯誤詳情:", res.text) # 這行能幫你看到 Apify 報什麼錯
+            return []
+    except Exception as e:
+        st.error(f"連線異常: {e}")
         return []
+
+# --- 核心邏輯區塊（加強欄位判斷） ---
+posts = fetch_data()
+
+if posts:
+    # 檢查 posts 是否真的是列表（有時 API 會回傳錯誤字典）
+    if isinstance(posts, dict) and "error" in posts:
+        st.error(f"Apify 報錯: {posts['error']}")
+    elif isinstance(posts, list):
+        df = pd.DataFrame(posts)
+        
+        # 顯示抓到的欄位名稱，方便我們對齊
+        # st.write("目前抓到的欄位:", df.columns.tolist()) 
+
+        # 自動適應多種可能的 Key 名稱
+        t_key = next((k for k in ['createdAt', 'created_at', 'timestamp', 'time', 'published_at'] if k in df.columns), None)
+        c_key = next((k for k in ['content', 'text', 'caption', 'body', 'note'] if k in df.columns), None)
+        i_key = next((k for k in ['id', 'post_id', 'id_str'] if k in df.columns), None)
+
+        if t_key and c_key:
+            # 原本的 UI 顯示邏輯...
+            latest = posts[0]
+            # (接下來接你原本的美化 UI 代碼)
+            # ...
+        else:
+            st.warning("⚠️ 資料格式不符。")
+            st.write("API 回傳的第一筆資料如下，請確認欄位名稱：", posts[0])
+    else:
+        st.error("API 回傳了非預期的格式。")
+else:
+    st.warning("目前抓不到資料。請檢查：1. Apify Token 是否正確 2. 川普最近是否有發文 3. 您的 Apify 額度是否耗盡。")
+
 
 # --- D. 主頁面介面 ---
 col1, col2 = st.columns([2, 1])
