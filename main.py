@@ -17,7 +17,7 @@ st.markdown("""
     .time-label { color: #666; font-size: 0.85rem; }
     .trans-text { color: #1a73e8; font-weight: 500; margin-top: 10px; }
     </style>
-    """, unsafe_allow_stdio=True)
+    """, unsafe_allow_html=True)
 
 # 讀取 Secrets
 try:
